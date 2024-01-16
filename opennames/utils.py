@@ -1,5 +1,7 @@
 import re
+import random
 
+from opennames.models import Opennames
 
 
 """
@@ -64,3 +66,19 @@ def geojson_from_items(items):
                                                          location.get('lon'), location.get('lat')]}})
 
     return geojson
+
+def random_place():
+
+    opennames_count = 3000000
+    random_index = random.randint(0, opennames_count)
+    rand_item = None
+    while not rand_item:
+        try:
+            rand_item = Opennames.objects.get(id=random_index)
+        except:
+            random_index = random.randint(0, opennames_count)
+            rand_item = None
+
+    random_item = Opennames.objects.get(id=random_index)
+
+    return random_item

@@ -9,7 +9,8 @@ from django.core.management.base import BaseCommand, CommandError
 
 
 class OSLoader(BaseCommand):
-    product_url = settings.DEFAULT_URLS.get('osproducts')
+    default_urls = getattr(settings, 'DEFAULT_URLS', {})
+    product_url = default_urls.get('osproducts', 'https://api.os.uk/downloads/v1/products')
 
     def __init__(self, **kwargs):
         BaseCommand.__init__(self)
@@ -100,7 +101,8 @@ class OSLoader(BaseCommand):
         if db_settings['ENGINE'] != 'django.contrib.gis.db.backends.postgis':
             raise CommandError("This function only supports the PostGIS database backend")
 
-        schema = settings.SCHEMA
+        schema = getattr(settings, 'SCHEMA', 'public')
+
         if not schema:
             self.stdout.write(self.style.WARNING('SCHEMA variable not set in settings.py will write to public schema'))
 

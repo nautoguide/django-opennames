@@ -21,5 +21,5 @@ class Command(BaseCommand):
             downloader.filename = options['gpkg']
 
         # Step 2 import using OGR2OGR
-        result = downloader.ogr_import(model_name='geocoder_opennames', layer_name='named_place')
+        result = downloader.ogr_import(model_name='opennames_opennames', layer_name='named_place')
         self.stdout.write(self.style.SUCCESS(f'Ran the OS Opennames Loader {result}'))
