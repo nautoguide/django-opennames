@@ -34,7 +34,6 @@ class Opennames(models.Model):
     same_as_dbpedia = models.CharField(max_length=255, null=True)
     same_as_geonames = models.CharField(max_length=255, null=True)
     geom = models.PointField(srid=4326, null=True)
-
     class Meta:
         ordering = ['name1']
         indexes = [
