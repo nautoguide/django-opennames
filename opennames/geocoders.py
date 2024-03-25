@@ -1,17 +1,35 @@
 import pyproj
+import json
 
+from django.contrib.gis.db.models.functions import Transform
 from django.contrib.gis.geos import Point
-from geocoder.models import Opennames
+from .models import Opennames
 
 
 class OpennamesGeocoder:
     @staticmethod
-    def geocode(postcode):
+    def geocode(postcode, **kwargs):
         try:
             # Query the OpenName model using the provided postcode and local_type constraint
             postcode = postcode.replace(' ', '')
             formatted_postcode = " ".join([postcode[:-3], postcode[-3:]]).upper()
             result = Opennames.objects.get(name1=formatted_postcode, local_type='Postcode')
+
+            buffer = kwargs.get('buffer')
+            ret = []
+            if buffer:
+                pt = result.geom.transform(3857, clone=True)
+                bp = pt.buffer(buffer)
+                bp.transform(4326)
+                bpj = json.loads(bp.geojson)
+                bpj['properties'] = {'buffer': buffer, 'type': 'buffer'}
+                ret = [bpj]
+
+            if kwargs.get('format') == 'geojson':
+                p = json.loads(result.geom.geojson)
+                p['properties'] = {'postcode': postcode, 'type': 'postcode'}
+                ret.append(p)
+                return {'type': 'FeatureCollection', 'features': ret}
 
             # Return the coordinates as a tuple
             return result.geom
@@ -141,4 +159,3 @@ def reverse_geocoder_latlon(lon, lat, local_type=['Postcode']):
 
     item = next(iter(nearest), None)
     return item.name1 if item else ''
-
