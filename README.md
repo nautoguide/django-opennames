@@ -4,6 +4,7 @@ Integration of Ordnance Survey Opennames data with django
 # Install
 
 For git using latest version
+
 ```bash
 pip install git+https://github.com/nautoguide/django-opennames.git
 ```
