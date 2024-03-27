@@ -5,6 +5,13 @@ from django.contrib.gis.db.models.functions import Transform
 from django.contrib.gis.geos import Point
 from .models import Opennames
 
+def featureMaker(geometry, properties):
+
+    return {
+            'type' : 'Feature',
+            'geometry': json.loads(geometry),
+            'properties': properties
+        }
 
 class OpennamesGeocoder:
     @staticmethod
@@ -21,14 +28,11 @@ class OpennamesGeocoder:
                 pt = result.geom.transform(3857, clone=True)
                 bp = pt.buffer(buffer)
                 bp.transform(4326)
-                bpj = json.loads(bp.geojson)
-                bpj['properties'] = {'buffer': buffer, 'type': 'buffer'}
-                ret = [bpj]
+
+                ret = [featureMaker(bp.geojson,{'buffer': buffer, 'type': 'buffer'})]
 
             if kwargs.get('format') == 'geojson':
-                p = json.loads(result.geom.geojson)
-                p['properties'] = {'postcode': postcode, 'type': 'postcode'}
-                ret.append(p)
+                ret.append(featureMaker(result.geom.geojson,{'postcode': postcode, 'type': 'postcode'}))
                 return {'type': 'FeatureCollection', 'features': ret}
 
             # Return the coordinates as a tuple

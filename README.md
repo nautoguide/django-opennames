@@ -12,5 +12,5 @@ pip install git+https://github.com/nautoguide/django-opennames.git
 Local dev mode in edit mode
 
 ```bash
-sudo python3 -m pip install --user -e ~/WebstormProjects/projects/django-opennames
+sudo python3 -m pip install --user ~/WebstormProjects/django-opennames
 ```
