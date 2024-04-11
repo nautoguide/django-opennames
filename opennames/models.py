@@ -1,4 +1,9 @@
 from django.contrib.gis.db import models
+from django.contrib.postgres.indexes import GinIndex
+from django.contrib.postgres.search import SearchVector
+
+
+
 
 class Opennames(models.Model):
     ogc_fid = models.CharField(max_length=255, null=True)
@@ -34,6 +39,7 @@ class Opennames(models.Model):
     same_as_dbpedia = models.CharField(max_length=255, null=True)
     same_as_geonames = models.CharField(max_length=255, null=True)
     geom = models.PointField(srid=4326, null=True)
+
     class Meta:
         ordering = ['name1']
         indexes = [
@@ -43,6 +49,8 @@ class Opennames(models.Model):
                 condition=models.Q(local_type='Postcode')
             ),
             models.Index(fields=['local_type'], name='idx_opennames_local_type'),
+            GinIndex(SearchVector('name1', config='english'), name='name1_sv_gin_idx'),
+
         ]
 
     def __str__(self):
