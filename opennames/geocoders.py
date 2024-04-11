@@ -1,7 +1,8 @@
 import pyproj
 import json
 
-from django.contrib.gis.db.models.functions import Transform
+from django.contrib.postgres.search import SearchQuery, SearchRank, SearchVector
+from django.db.models import Case, When, Value, IntegerField
 from django.contrib.gis.geos import Point
 from .models import Opennames
 
@@ -28,14 +29,12 @@ class OpennamesGeocoder:
                 pt = result.geom.transform(3857, clone=True)
                 bp = pt.buffer(buffer)
                 bp.transform(4326)
-
                 ret = [featureMaker(bp.geojson,{'buffer': buffer, 'type': 'buffer'})]
 
             if kwargs.get('format') == 'geojson':
                 ret.append(featureMaker(result.geom.geojson,{'postcode': postcode, 'type': 'postcode'}))
                 return {'type': 'FeatureCollection', 'features': ret}
 
-            # Return the coordinates as a tuple
             return result.geom
 
         except Opennames.DoesNotExist:
@@ -43,6 +42,33 @@ class OpennamesGeocoder:
             # If no matching result is found, return None
             return None
 
+    @staticmethod
+    def places_search(query, **kwargs):
+        rank = kwargs.get('rank', 0.01)
+        limit = kwargs.get('limit', 50)
+        local_types = kwargs.get('local_types', ['City', 'Town', 'Village', 'Suburban Area', 'Named Road', 'Postcode'])
+        search_query = SearchQuery(query, config='english')
+
+        ordering_case = Case(
+            *[When(local_type=lt, then=Value(idx)) for idx, lt in enumerate(local_types)],
+            default=Value(len(local_types)),
+            output_field=IntegerField()
+        )
+
+        # results = Opennames.objects.annotate(
+        #     search=SearchVector('name1'),
+        #     rank=SearchRank('name1', search_query),
+        #     ordering=ordering_case
+        # ).filter(search=query, rank__gte=rank,local_type__in=local_types).order_by('ordering', '-rank')[:limit]
+
+        results = Opennames.objects.annotate(
+            search=SearchVector('name1', config='english'),
+            ordering=ordering_case,
+            rank=SearchRank('name1', search_query),
+        ).filter(search=query,local_type__in=local_types).order_by('ordering', 'rank')
+
+        data = list(results.values('name1', 'postcode_district', 'region', 'populated_place', 'local_type', 'rank'))
+        return data
 
 class GridRefGeocoder:
 
