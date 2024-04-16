@@ -2,9 +2,11 @@ import pyproj
 import json
 
 from django.contrib.postgres.search import SearchQuery, SearchRank, SearchVector
-from django.db.models import Case, When, Value, IntegerField
-from django.contrib.gis.geos import Point
+from django.db.models import Case, When, IntegerField, Value
+from django.db.models.expressions import RawSQL
+from django.contrib.gis.geos import Point, Polygon,GEOSGeometry
 from .models import Opennames
+
 
 def featureMaker(geometry, properties):
 
@@ -14,7 +16,24 @@ def featureMaker(geometry, properties):
             'properties': properties
         }
 
+
 class OpennamesGeocoder:
+
+    def __init__(self, **kwargs):
+        self.crs = kwargs.get('opennames_srs', 'epsg:4326')
+        self.input_crs = kwargs.get('input_srs', 'epsg:3857')
+        self.input_transformer = pyproj.Transformer.from_crs(self.input_crs, self.crs, always_xy=True)
+        self.output_transformer = pyproj.Transformer.from_crs(self.crs, self.input_crs, always_xy=True)
+        self.query_bbox = None
+    def make_query_bbox(self, **kwargs):
+        lon1, lat1, lon2, lat2 = kwargs.get('bbox')
+        x1, y1 = self.input_transformer.transform(lon1, lat1)
+        x2, y2 = self.input_transformer.transform(lon2, lat2)
+        self.query_bbox = Polygon.from_bbox((x1,y1,x2,y2))
+        geom = GEOSGeometry(self.query_bbox, srid=4326)
+        geom.transform(3857)
+        self.query_bbox_area = geom.area
+
     @staticmethod
     def geocode(postcode, **kwargs):
         try:
@@ -44,8 +63,6 @@ class OpennamesGeocoder:
 
     @staticmethod
     def places_search(query, **kwargs):
-        rank = kwargs.get('rank', 0.01)
-        limit = kwargs.get('limit', 50)
         local_types = kwargs.get('local_types', ['City', 'Town', 'Village', 'Suburban Area', 'Named Road', 'Postcode'])
         search_query = SearchQuery(query, config='english')
 
@@ -55,12 +72,6 @@ class OpennamesGeocoder:
             output_field=IntegerField()
         )
 
-        # results = Opennames.objects.annotate(
-        #     search=SearchVector('name1'),
-        #     rank=SearchRank('name1', search_query),
-        #     ordering=ordering_case
-        # ).filter(search=query, rank__gte=rank,local_type__in=local_types).order_by('ordering', '-rank')[:limit]
-
         results = Opennames.objects.annotate(
             search=SearchVector('name1', config='english'),
             ordering=ordering_case,
@@ -69,6 +80,45 @@ class OpennamesGeocoder:
 
         data = list(results.values('name1', 'postcode_district', 'region', 'populated_place', 'local_type', 'rank'))
         return data
+
+    def freetext(self, freetext, bbox, **kwargs):
+
+        rank_min = kwargs.get('min_rank',0.03)
+        max_area = kwargs.get('max_bbox_area', 10000 * 10000)
+        self.make_query_bbox(bbox=bbox)
+        if self.query_bbox_area > max_area:
+            return {'error': 'bbox too large', 'area': self.query_bbox_area}
+
+        matches = Opennames.objects.annotate(
+            rank=RawSQL("""
+                ts_rank(to_tsvector('english', %s), phraseto_tsquery('english', name1))
+            """, [freetext]),
+            headline=RawSQL("""
+                ts_headline('english', %s, phraseto_tsquery('english', name1), 'StartSel=<<<,StopSel=>>>')
+            """, [freetext])
+        ).filter(
+            geom__within=self.query_bbox,
+            rank__gte=rank_min
+        ).order_by('-rank')
+
+        features = [
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [match.geom.x, match.geom.y]
+                },
+                "properties": {
+                    "name": match.name1,
+                    "rank": match.rank,
+                    "headline": match.headline if '<<<' in match.headline else ''
+                }
+            } for match in matches
+        ]
+
+        fc = {"type": "FeatureCollection", "features": features}
+        return {'text':freetext, 'bbox': self.query_bbox.ewkt, 'geojson': fc, 'bbox_area': self.query_bbox_area}
+
 
 class GridRefGeocoder:
 
