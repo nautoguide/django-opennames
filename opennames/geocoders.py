@@ -78,8 +78,21 @@ class OpennamesGeocoder:
             rank=SearchRank('name1', search_query),
         ).filter(search=query,local_type__in=local_types).order_by('ordering', 'rank')
 
-        data = list(results.values('name1', 'postcode_district', 'region', 'populated_place', 'local_type', 'rank'))
-        return data
+        features = [
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [match.geom.x, match.geom.y]
+                },
+                "properties": {
+                    "name": match.name1,
+                    "rank": match.rank
+                }
+            } for match in results
+        ]
+        fc = {"type": "FeatureCollection", "features": features}
+        return fc
 
     def freetext(self, freetext, bbox, **kwargs):
 
