@@ -1,7 +1,10 @@
 import pyproj
 import json
+import re
 
+from collections import OrderedDict
 from django.contrib.postgres.search import SearchQuery, SearchRank, SearchVector
+from django.contrib.gis.db.models.functions import Distance
 from django.db.models import Case, When, IntegerField, Value
 from django.db.models.expressions import RawSQL
 from django.contrib.gis.geos import Point, Polygon,GEOSGeometry
@@ -20,8 +23,10 @@ def featureMaker(geometry, properties):
 class OpennamesGeocoder:
 
     def __init__(self, **kwargs):
-        self.crs = kwargs.get('opennames_srs', 'epsg:4326')
-        self.input_crs = kwargs.get('input_srs', 'epsg:3857')
+        self.crs = kwargs.get('opennames_crs', 'epsg:4326')
+        self.crs_code = int(self.crs.split(':')[1])
+        self.input_crs = kwargs.get('input_crs', 'epsg:3857')
+        self.input_crs_code = int(self.input_crs.split(':')[1])
         self.input_transformer = pyproj.Transformer.from_crs(self.input_crs, self.crs, always_xy=True)
         self.output_transformer = pyproj.Transformer.from_crs(self.crs, self.input_crs, always_xy=True)
         self.query_bbox = None
@@ -30,9 +35,10 @@ class OpennamesGeocoder:
         x1, y1 = self.input_transformer.transform(lon1, lat1)
         x2, y2 = self.input_transformer.transform(lon2, lat2)
         self.query_bbox = Polygon.from_bbox((x1,y1,x2,y2))
-        geom = GEOSGeometry(self.query_bbox, srid=4326)
-        geom.transform(3857)
+        geom = GEOSGeometry(self.query_bbox, srid=self.input_crs_code)
+        geom.transform(self.crs_code)
         self.query_bbox_area = geom.area
+        self.focus_point = geom.centroid
 
     @staticmethod
     def geocode(postcode, **kwargs):
@@ -99,8 +105,15 @@ class OpennamesGeocoder:
         rank_min = kwargs.get('min_rank',0.03)
         max_area = kwargs.get('max_bbox_area', 10000 * 10000)
         self.make_query_bbox(bbox=bbox)
+
         if self.query_bbox_area > max_area:
             return {'error': 'bbox too large', 'area': self.query_bbox_area}
+
+        focus_point = kwargs.get('focus_point')
+        if focus_point:
+            transformed_focus_point = self.input_transformer.transform(focus_point[0],focus_point[1])
+            self.focus_point = Point(transformed_focus_point[0],transformed_focus_point[1], srid=self.input_crs_code)
+
 
         matches = Opennames.objects.annotate(
             rank=RawSQL("""
@@ -108,11 +121,34 @@ class OpennamesGeocoder:
             """, [freetext]),
             headline=RawSQL("""
                 ts_headline('english', %s, phraseto_tsquery('english', name1), 'StartSel=<<<,StopSel=>>>')
-            """, [freetext])
+            """, [freetext]),
+            fp_distance=Distance('geom', self.focus_point),
+            match_index=Value(-1, output_field=IntegerField())  # Dummy field for match_index
         ).filter(
             geom__within=self.query_bbox,
             rank__gte=rank_min
         ).order_by('-rank')
+        indexes = []
+        for match in matches:
+            if '<<<' in match.headline:
+                pattern = r'<<<(.*?)>>>'
+                headline_matches = re.findall(pattern, match.headline)
+                cleaned_matches = list(OrderedDict.fromkeys(headline_matches))
+                combined_string = ' '.join(cleaned_matches)
+                try:
+                    ind = freetext.index(combined_string)
+                    # if ind not in indexes:
+                    #     match.match_index = ind
+                    #     indexes.append(ind)
+                    ind_tuple = (ind, match.fp_distance)
+                    indexes =[ind_tuple if i[0] == ind and i[1] > match.fp_distance else i for i in indexes]
+                    if ind_tuple not in indexes:
+                        indexes.append(ind_tuple)
+                        match.match_index = ind
+                    else:
+                        raise ValueError
+                except ValueError:
+                    match.match_index = -1
 
         features = [
             {
@@ -124,9 +160,12 @@ class OpennamesGeocoder:
                 "properties": {
                     "name": match.name1,
                     "rank": match.rank,
-                    "headline": match.headline if '<<<' in match.headline else ''
+                    "headline": match.headline if '<<<' in match.headline else '',
+                    "index": match.match_index,
+                    "fp_distance": match.fp_distance.m
+
                 }
-            } for match in matches
+            } for match in sorted(matches, key=lambda x: x.match_index) if match.match_index != -1 or kwargs.get('non_indexed_matches')
         ]
 
         fc = {"type": "FeatureCollection", "features": features}
