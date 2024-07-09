@@ -13,4 +13,5 @@ Local dev mode in edit mode
 
 ```bash
 python3 -m pip install --user -e ~/WebstormProjects/django-opennames
+
 ```
